@@ -230,6 +230,9 @@ async function getReturnData(symbol, months) {
     throw new Error("insufficient_data");
   }
 
+  const currency = String(result.meta?.currency || "TWD").toUpperCase();
+  const fx = await resolveFxToTwd(currency);
+
   return {
     symbol,
     months,
@@ -238,8 +241,52 @@ async function getReturnData(symbol, months) {
     startPrice: first.price,
     latestPrice: last.price,
     returnRate,
+    currency,
+    fxRate: fx.rate,
+    fxPairSymbol: fx.pairSymbol,
+    fxAsOf: fx.asOf,
     series: compactSeries(series, 220)
   };
+}
+
+async function resolveFxToTwd(currency) {
+  if (!currency || currency === "TWD") {
+    return { rate: 1, pairSymbol: null, asOf: null };
+  }
+
+  const pairSymbol = `${currency}TWD=X`;
+  const url = new URL(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(pairSymbol)}`);
+  url.searchParams.set("interval", "1d");
+  url.searchParams.set("range", "5d");
+
+  try {
+    const payload = await fetchJson(url);
+    const result = payload.chart?.result?.[0];
+    if (!result || !Array.isArray(result.timestamp)) {
+      return { rate: null, pairSymbol, asOf: null };
+    }
+    const timestamps = result.timestamp;
+    const closes = result.indicators?.quote?.[0]?.close || [];
+    let rate = Number(result.meta?.regularMarketPrice);
+    let asOf = null;
+    for (let index = closes.length - 1; index >= 0; index -= 1) {
+      const candidate = Number(closes[index]);
+      if (Number.isFinite(candidate) && candidate > 0) {
+        if (!Number.isFinite(rate) || rate <= 0) {
+          rate = candidate;
+        }
+        asOf = formatDate(new Date(timestamps[index] * 1000));
+        break;
+      }
+    }
+    if (!Number.isFinite(rate) || rate <= 0) {
+      return { rate: null, pairSymbol, asOf: null };
+    }
+    return { rate, pairSymbol, asOf };
+  } catch (error) {
+    console.error("fx_lookup_failed", error);
+    return { rate: null, pairSymbol, asOf: null };
+  }
 }
 
 async function fetchJson(url) {

@@ -373,6 +373,134 @@ input[type="range"] {
   font-size: 0.92rem;
 }
 
+.section-description {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.simulation-detail {
+  padding: 0 28px 28px;
+  display: grid;
+  gap: 18px;
+}
+
+.simulation-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.simulation-toolbar .field {
+  min-width: 180px;
+  gap: 6px;
+}
+
+.simulation-toolbar select {
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--text);
+  padding: 10px 12px;
+  outline: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.simulation-toolbar select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(55, 199, 181, 0.13);
+}
+
+.simulation-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(13, 19, 27, 0.72);
+}
+
+.simulation-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.simulation-table th,
+.simulation-table td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.simulation-table th {
+  position: sticky;
+  top: 0;
+  background: rgba(23, 33, 45, 0.96);
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.simulation-table td {
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.simulation-table th.num,
+.simulation-table td.num {
+  text-align: right;
+}
+
+.simulation-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.simulation-table tbody tr.row-warning td {
+  background: rgba(255, 122, 138, 0.1);
+  color: #ffc3ca;
+}
+
+.simulation-table tr.group-row th {
+  text-align: center;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.simulation-table th.group-common,
+.simulation-table td.group-common {
+  background: rgba(23, 33, 45, 0.55);
+}
+
+.simulation-table th.group-hold,
+.simulation-table td.group-hold {
+  background: rgba(110, 231, 216, 0.08);
+}
+
+.simulation-table th.group-repay,
+.simulation-table td.group-repay {
+  background: rgba(244, 188, 83, 0.07);
+}
+
+.simulation-table tr.group-row th.group-common {
+  background: rgba(23, 33, 45, 0.8);
+}
+
+.simulation-table tr.group-row th.group-hold {
+  background: rgba(110, 231, 216, 0.18);
+  color: var(--accent-strong);
+}
+
+.simulation-table tr.group-row th.group-repay {
+  background: rgba(244, 188, 83, 0.18);
+  color: #ffd58c;
+}
+
+.simulation-table tbody tr.row-warning td.group-repay {
+  background: rgba(255, 122, 138, 0.18);
+}
+
 @media (max-width: 860px) {
   .page-shell {
     width: min(100% - 22px, 1180px);
@@ -390,6 +518,10 @@ input[type="range"] {
 
   .section-heading {
     padding: 22px 20px 18px;
+  }
+
+  .simulation-detail {
+    padding: 0 20px 20px;
   }
 }
 

@@ -1,4 +1,10 @@
-import { calculateLoanPayment, clampNumber } from "./calculations.js";
+import {
+  calculateLoanPayment,
+  clampNumber,
+  derivePeriodMonthlyRate,
+  simulateStockLoanRepayment,
+  simulateStockHold
+} from "./calculations.js";
 import { copy } from "./i18n/zh-TW.js";
 
 const state = {
@@ -17,6 +23,10 @@ const state = {
     returnStatus: "idle",
     returnData: null,
     error: null
+  },
+  simulation: {
+    buyAmount: 1000000,
+    selectedYear: null
   }
 };
 
@@ -44,6 +54,25 @@ const formatPrice = new Intl.NumberFormat("zh-TW", {
   minimumFractionDigits: 2
 });
 
+const formatShares = new Intl.NumberFormat("zh-TW", {
+  maximumFractionDigits: 4,
+  minimumFractionDigits: 2
+});
+
+const formatSharesInt = new Intl.NumberFormat("zh-TW", {
+  maximumFractionDigits: 0
+});
+
+const formatPrice4 = new Intl.NumberFormat("zh-TW", {
+  maximumFractionDigits: 4,
+  minimumFractionDigits: 2
+});
+
+const formatFx = new Intl.NumberFormat("zh-TW", {
+  maximumFractionDigits: 4,
+  minimumFractionDigits: 4
+});
+
 let searchTimer = null;
 let returnTimer = null;
 let searchController = null;
@@ -57,6 +86,7 @@ bindStaticEvents();
 updateLoan();
 updateStockSearchView();
 updateReturnView();
+updateSimulationView();
 
 function render() {
   app.innerHTML = `
@@ -124,6 +154,26 @@ function render() {
             <div class="stock-output" id="stock-return" aria-live="polite"></div>
           </div>
         </section>
+
+        <section class="tool-panel simulation-panel" aria-labelledby="simulation-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">${copy.simulationEyebrow}</p>
+              <h2 id="simulation-title">${copy.simulationTitle}</h2>
+              <p class="section-description">${copy.simulationDescription}</p>
+            </div>
+          </div>
+
+          <div class="tool-grid">
+            <form class="control-stack" id="simulation-form">
+              ${numberOnlyControl("buyAmount", copy.simulationBuyAmount, state.simulation.buyAmount, 1, "1", copy.twd, "simulation")}
+            </form>
+
+            <div class="result-grid" id="simulation-summary"></div>
+          </div>
+
+          <div class="simulation-detail" id="simulation-detail" aria-live="polite"></div>
+        </section>
       </main>
     </div>
   `;
@@ -146,14 +196,19 @@ function bindStaticEvents() {
   document.querySelector("#stock-query").addEventListener("input", handleSearchInput);
   document.querySelector("#stock-search-button").addEventListener("click", () => runStockSearch());
   document.querySelector("#stock-clear-button").addEventListener("click", clearStockSearch);
+
+  document.querySelectorAll("[data-simulation-input]").forEach((input) => {
+    input.addEventListener("input", handleSimulationInput);
+  });
 }
 
-function numberOnlyControl(name, label, value, min, step, suffix) {
+function numberOnlyControl(name, label, value, min, step, suffix, scope = "loan") {
+  const inputAttr = scope === "loan" ? "data-loan-input" : `data-${scope}-input`;
   return `
     <label class="field">
       <span>${label}</span>
       <div class="input-row">
-        <input data-loan-input="${name}" type="text" inputmode="numeric" autocomplete="off" value="${formatPrincipalInput(value)}" />
+        <input ${inputAttr}="${name}" type="text" inputmode="numeric" autocomplete="off" value="${formatPrincipalInput(value)}" />
         <em>${suffix}</em>
       </div>
     </label>
@@ -192,6 +247,7 @@ function handleLoanInput(event) {
     range.value = clampNumber(value, Number(range.min), Number(range.max));
   }
   updateLoan();
+  updateSimulationView();
 }
 
 function handleLoanRange(event) {
@@ -200,6 +256,7 @@ function handleLoanRange(event) {
   state.loan[name] = value;
   document.querySelector(`[data-loan-input='${name}']`).value = value;
   updateLoan();
+  updateSimulationView();
 }
 
 function parsePrincipalInput(value) {
@@ -499,6 +556,7 @@ function updateReturnView() {
     </div>
     <p class="source-note">${copy.sourceNote}</p>
   `;
+  updateSimulationView();
 }
 
 function renderSparkline(series) {
@@ -533,4 +591,272 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function handleSimulationInput(event) {
+  const name = event.target.dataset.simulationInput;
+  if (name === "buyAmount") {
+    const value = parsePrincipalInput(event.target.value);
+    state.simulation.buyAmount = value;
+    formatPrincipalInputElement(event.target);
+  } else {
+    state.simulation[name] = Number(event.target.value);
+  }
+  updateSimulationView();
+}
+
+function handleSimulationYearChange(event) {
+  state.simulation.selectedYear = Number(event.target.value);
+  renderSimulationTable();
+}
+
+function updateSimulationView() {
+  const summary = document.querySelector("#simulation-summary");
+  const detail = document.querySelector("#simulation-detail");
+  if (!summary || !detail) {
+    return;
+  }
+
+  const loan = calculateLoanPayment(state.loan);
+  if (!loan.ok) {
+    summary.innerHTML = `<div class="state-card warning-state">${loanErrorMessage(loan.error)}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  if (!state.stock.selected) {
+    summary.innerHTML = `<div class="state-card">${copy.simulationNoStock}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  if (state.stock.returnStatus === "loading") {
+    summary.innerHTML = `<div class="state-card">${copy.loadingReturn}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  if (state.stock.returnStatus === "insufficient") {
+    summary.innerHTML = `<div class="state-card warning-state">${copy.insufficientData}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  if (state.stock.returnStatus !== "ready" || !state.stock.returnData) {
+    summary.innerHTML = `<div class="state-card">${copy.simulationNoReturn}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  const data = state.stock.returnData;
+  const monthlyRate = derivePeriodMonthlyRate(data.returnRate, data.months);
+  if (monthlyRate === null) {
+    summary.innerHTML = `<div class="state-card warning-state">${copy.simulationInvalidMonthlyRate}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  const currency = (data.currency || "TWD").toUpperCase();
+  const fxRate = currency === "TWD" ? 1 : Number(data.fxRate);
+  if (!Number.isFinite(fxRate) || fxRate <= 0) {
+    summary.innerHTML = `<div class="state-card warning-state">${copy.simulationInvalidFxRate}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  const result = simulateStockLoanRepayment({
+    buyAmount: state.simulation.buyAmount,
+    startPrice: data.latestPrice,
+    monthlyRate,
+    totalMonths: loan.totalMonths,
+    graceMonths: loan.graceMonths,
+    graceMonthlyPayment: loan.graceMonthlyPayment,
+    repaymentMonthlyPayment: loan.repaymentMonthlyPayment,
+    startDate: new Date(),
+    fxRate
+  });
+
+  if (!result.ok) {
+    summary.innerHTML = `<div class="state-card warning-state">${simulationErrorMessage(result.error)}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  const holdResult = simulateStockHold({
+    buyAmount: state.simulation.buyAmount,
+    startPrice: data.latestPrice,
+    monthlyRate,
+    totalMonths: loan.totalMonths,
+    startDate: new Date(),
+    fxRate
+  });
+
+  if (!holdResult.ok) {
+    summary.innerHTML = `<div class="state-card warning-state">${simulationErrorMessage(holdResult.error)}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  state.simulation.result = result;
+  state.simulation.holdResult = holdResult;
+  state.simulation.currency = currency;
+  state.simulation.fxRate = fxRate;
+
+  const years = uniqueYears(result.rows);
+  if (!years.includes(state.simulation.selectedYear)) {
+    state.simulation.selectedYear = years[0];
+  }
+
+  const repayTone = result.insufficient
+    ? "negative"
+    : result.totalReturnPercent > 0
+      ? "positive"
+      : result.totalReturnPercent < 0
+        ? "negative"
+        : "flat";
+  const holdTone = holdResult.totalReturnPercent > 0
+    ? "positive"
+    : holdResult.totalReturnPercent < 0
+      ? "negative"
+      : "flat";
+
+  const fxCard = currency === "TWD"
+    ? metricCard(copy.simulationCurrencyLabel, currency)
+    : metricCard(copy.simulationFxLabel, `1 ${currency} = ${formatFx.format(fxRate)} TWD${data.fxAsOf ? ` (${data.fxAsOf})` : ""}`);
+
+  summary.innerHTML = `
+    ${metricCard(copy.simulationCurrencyLabel, currency)}
+    ${fxCard}
+    ${metricCard(copy.simulationMonthlyRate, `${formatPercent.format(result.monthlyRatePercent)}${copy.percent}`)}
+    ${metricCard(copy.simulationHoldFinalValue, formatCurrency.format(holdResult.finalValue), holdTone === "positive" ? "primary" : "")}
+    ${metricCard(copy.simulationHoldReturn, `${formatPercent.format(holdResult.totalReturnPercent)}${copy.percent}`, holdTone === "positive" ? "primary" : "")}
+    ${metricCard(copy.simulationRepayFinalValue, formatCurrency.format(result.finalValue), repayTone === "positive" ? "primary" : "")}
+    ${metricCard(copy.simulationRepayReturn, `${formatPercent.format(result.totalReturnPercent)}${copy.percent}`, repayTone === "positive" ? "primary" : "")}
+    ${metricCard(copy.simulationNetReturn, `${formatPercent.format(result.netReturnPercent)}${copy.percent}`)}
+    ${metricCard(copy.simulationTotalPaid, formatCurrency.format(result.totalPaid))}
+    ${metricCard(copy.simulationShortfall, formatCurrency.format(result.totalShortfall))}
+    ${metricCard(copy.simulationInitialShares, formatSharesInt.format(result.initialShares))}
+    ${metricCard(copy.simulationFinalShares, formatSharesInt.format(result.finalShares))}
+    ${metricCard(copy.simulationInitialCash, formatCurrency.format(result.initialCash))}
+  `;
+
+  const warning = result.insufficient
+    ? `<div class="state-card warning-state">${copy.simulationInsufficient}</div>`
+    : "";
+
+  detail.innerHTML = `
+    ${warning}
+    <div class="simulation-toolbar">
+      <label class="field year-select">
+        <span>${copy.simulationYearLabel}</span>
+        <select id="simulation-year">
+          ${years.map((year) => `<option value="${year}" ${year === state.simulation.selectedYear ? "selected" : ""}>${year}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+    <div class="simulation-table-wrap" id="simulation-table-wrap"></div>
+    <p class="source-note">${copy.simulationNote}</p>
+  `;
+
+  document.querySelector("#simulation-year").addEventListener("change", handleSimulationYearChange);
+  renderSimulationTable();
+}
+
+function renderSimulationTable() {
+  const wrap = document.querySelector("#simulation-table-wrap");
+  const result = state.simulation.result;
+  const holdResult = state.simulation.holdResult;
+  if (!wrap || !result || !holdResult) {
+    return;
+  }
+
+  const holdByLabel = new Map(holdResult.rows.map((row) => [row.label, row]));
+  const rows = result.rows
+    .filter((row) => row.year === state.simulation.selectedYear)
+    .map((row) => ({ repay: row, hold: holdByLabel.get(row.label) }));
+  if (rows.length === 0) {
+    wrap.innerHTML = `<div class="state-card">${copy.simulationNoReturn}</div>`;
+    return;
+  }
+
+  const currency = state.simulation.currency || "TWD";
+  const startPriceHeader = currency === "TWD"
+    ? copy.simulationTableStartPrice
+    : `${copy.simulationTableStartPrice} (${currency})`;
+
+  wrap.innerHTML = `
+    <table class="simulation-table">
+      <thead>
+        <tr class="group-row">
+          <th class="group-common" colspan="3">${copy.simulationGroupCommon}</th>
+          <th class="group-hold" colspan="3">${copy.simulationGroupHold}</th>
+          <th class="group-repay" colspan="7">${copy.simulationGroupRepay}</th>
+        </tr>
+        <tr>
+          <th class="group-common">${copy.simulationTableMonth}</th>
+          <th class="group-common">${copy.simulationTableStage}</th>
+          <th class="group-common num">${startPriceHeader}</th>
+          <th class="group-hold num">${copy.simulationTableHoldValue}</th>
+          <th class="group-hold num">${copy.simulationTableHoldTotal}</th>
+          <th class="group-hold num">${copy.simulationTableHoldReturn}</th>
+          <th class="group-repay num">${copy.simulationTablePayment}</th>
+          <th class="group-repay num">${copy.simulationTableSold}</th>
+          <th class="group-repay num">${copy.simulationTableProceeds}</th>
+          <th class="group-repay num">${copy.simulationTableRemaining}</th>
+          <th class="group-repay num">${copy.simulationTableCash}</th>
+          <th class="group-repay num">${copy.simulationTableEndValue}</th>
+          <th class="group-repay num">${copy.simulationTableShortfall}</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(({ repay, hold }) => {
+          const holdValue = hold ? formatCurrency.format(hold.sharesValueTwd) : "-";
+          const holdTotal = hold ? formatCurrency.format(hold.totalValueTwd) : "-";
+          const holdReturn = hold ? `${formatPercent.format(hold.cumulativeReturnPercent)}${copy.percent}` : "-";
+          return `
+            <tr class="${repay.shortfall > 0 ? "row-warning" : ""}">
+              <td class="group-common">${repay.label}</td>
+              <td class="group-common">${repay.stage === "grace" ? copy.simulationStageGrace : copy.simulationStageRepayment}</td>
+              <td class="group-common num">${formatPrice4.format(repay.startPrice)}${currency === "TWD" ? "" : ` ${currency}`}</td>
+              <td class="group-hold num">${holdValue}</td>
+              <td class="group-hold num">${holdTotal}</td>
+              <td class="group-hold num">${holdReturn}</td>
+              <td class="group-repay num">${formatCurrency.format(repay.payment)}</td>
+              <td class="group-repay num">${formatSharesInt.format(repay.soldShares)}</td>
+              <td class="group-repay num">${formatCurrency.format(repay.proceedsTwd)}</td>
+              <td class="group-repay num">${formatSharesInt.format(repay.remainingShares)}</td>
+              <td class="group-repay num">${formatCurrency.format(repay.cashAtMonthEnd)}</td>
+              <td class="group-repay num">${formatCurrency.format(repay.endValue)}</td>
+              <td class="group-repay num">${repay.shortfall > 0 ? formatCurrency.format(repay.shortfall) : "-"}</td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function uniqueYears(rows) {
+  const seen = new Set();
+  const years = [];
+  rows.forEach((row) => {
+    if (!seen.has(row.year)) {
+      seen.add(row.year);
+      years.push(row.year);
+    }
+  });
+  return years;
+}
+
+function simulationErrorMessage(error) {
+  const messages = {
+    invalid_buy_amount: copy.simulationInvalidBuy,
+    invalid_start_price: copy.simulationInvalidStartPrice,
+    invalid_monthly_rate: copy.simulationInvalidMonthlyRate,
+    invalid_fx_rate: copy.simulationInvalidFxRate,
+    buy_amount_too_small: copy.simulationBuyAmountTooSmall,
+    invalid_term: copy.invalidTerm,
+    invalid_grace: copy.invalidGrace
+  };
+  return messages[error] || copy.apiError;
 }
