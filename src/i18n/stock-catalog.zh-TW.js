@@ -77,6 +77,13 @@ export const localizedStockCatalog = [
     aliases: ["台積電", "台灣積體電路", "TSMC"]
   },
   {
+    name: "Yuanta Daily Taiwan 50 Bull 2X ETF",
+    symbol: "00631L.TW",
+    code: "00631L",
+    exchange: "Taiwan Stock Exchange",
+    aliases: ["0050正二", "0050正2", "台灣50正二", "台灣50正2", "元大0050正二", "元大0050正2", "元大台灣50正二", "元大台灣50正2", "Yuanta Taiwan 50 2X"]
+  },
+  {
     name: "Hon Hai Precision Industry Co., Ltd.",
     symbol: "2317.TW",
     code: "2317",

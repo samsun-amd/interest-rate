@@ -55,8 +55,8 @@ async function handleSearch(url, response) {
   try {
     const yahooResults = await settleSearch(searchYahoo(query));
     const catalogResults = searchCatalog(query);
-    const numericResults = createNumericCandidates(query);
-    const results = dedupeResults([...catalogResults, ...numericResults, ...yahooResults]).slice(0, 12);
+    const directResults = createDirectSymbolCandidates(query);
+    const results = dedupeResults([...catalogResults, ...directResults, ...yahooResults]).slice(0, 12);
     sendJson(response, 200, { results });
   } catch (error) {
     console.error(error);
@@ -165,27 +165,44 @@ function searchCatalog(query) {
     }));
 }
 
-function createNumericCandidates(query) {
-  if (!/^\d{3,6}$/.test(query)) {
+function createDirectSymbolCandidates(query) {
+  const normalized = String(query || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!normalized) {
     return [];
   }
 
-  return [
-    {
-      name: `${query} Taiwan listed equity`,
-      symbol: `${query}.TW`,
-      code: query,
-      exchange: "Taiwan Stock Exchange",
+  const results = [];
+
+  if (/^\d{3,6}[A-Z]{0,2}$/.test(normalized)) {
+    results.push(
+      {
+        name: `${normalized} Taiwan listed equity or ETF`,
+        symbol: `${normalized}.TW`,
+        code: normalized,
+        exchange: "Taiwan Stock Exchange",
+        type: "EQUITY"
+      },
+      {
+        name: `${normalized} Taiwan OTC equity or ETF`,
+        symbol: `${normalized}.TWO`,
+        code: normalized,
+        exchange: "Taipei Exchange",
+        type: "EQUITY"
+      }
+    );
+  }
+
+  if (/^[A-Z]{1,5}$/.test(normalized)) {
+    results.push({
+      name: `${normalized} US listed equity or ETF`,
+      symbol: normalized,
+      code: normalized,
+      exchange: "US Market",
       type: "EQUITY"
-    },
-    {
-      name: `${query} Taiwan OTC equity`,
-      symbol: `${query}.TWO`,
-      code: query,
-      exchange: "Taipei Exchange",
-      type: "EQUITY"
-    }
-  ];
+    });
+  }
+
+  return results;
 }
 
 async function getReturnData(symbol, months) {
@@ -353,6 +370,9 @@ function scoreField(rawField, query) {
   }
   if (field.includes(query)) {
     return 66;
+  }
+  if (field.length >= 3 && query.includes(field)) {
+    return 62;
   }
 
   if (isAsciiSearch(query) && query.length >= 3) {
