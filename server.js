@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { calculateReturnRate } from "./src/calculations.js";
 import { localizedStockCatalog } from "./src/i18n/stock-catalog.zh-TW.js";
 
@@ -41,9 +41,15 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(port, host, () => {
-  console.log(`Server running at http://${host}:${port}`);
-});
+if (isMainModule()) {
+  server.listen(port, host, () => {
+    console.log(`Server running at http://${host}:${port}`);
+  });
+}
+
+function isMainModule() {
+  return process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
+}
 
 async function handleSearch(url, response) {
   const query = (url.searchParams.get("q") || "").trim();
@@ -78,7 +84,7 @@ async function handleReturns(url, response) {
   }
 
   try {
-    const payload = await getReturnData(symbol, months);
+    const payload = await getReturnDataWithFallback(symbol, months);
     sendJson(response, 200, payload);
   } catch (error) {
     if (error.message === "insufficient_data") {
@@ -143,21 +149,22 @@ async function settleSearch(promise) {
   }
 }
 
-function searchCatalog(query) {
+export function searchCatalog(query) {
   const normalizedQuery = normalizeSearchText(query);
   if (!normalizedQuery) {
     return [];
   }
+  const codeLikeQuery = isInstrumentCodeSearch(normalizedQuery);
 
   return localizedStockCatalog
     .map((stock) => ({
       stock,
-      score: scoreStock(stock, normalizedQuery)
+      score: scoreStock(stock, normalizedQuery, codeLikeQuery)
     }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score || a.stock.symbol.localeCompare(b.stock.symbol))
     .map((entry) => ({
-      name: entry.stock.name,
+      name: displayNameForStock(entry.stock),
       symbol: entry.stock.symbol,
       code: entry.stock.code,
       exchange: entry.stock.exchange,
@@ -165,8 +172,8 @@ function searchCatalog(query) {
     }));
 }
 
-function createDirectSymbolCandidates(query) {
-  const normalized = String(query || "").trim().toUpperCase().replace(/\s+/g, "");
+export function createDirectSymbolCandidates(query) {
+  const normalized = normalizeSymbolText(query);
   if (!normalized) {
     return [];
   }
@@ -176,14 +183,14 @@ function createDirectSymbolCandidates(query) {
   if (/^\d{3,6}[A-Z]{0,2}$/.test(normalized)) {
     results.push(
       {
-        name: `${normalized} Taiwan listed equity or ETF`,
+        name: `${normalized} 台灣上市股票或 ETF`,
         symbol: `${normalized}.TW`,
         code: normalized,
         exchange: "Taiwan Stock Exchange",
         type: "EQUITY"
       },
       {
-        name: `${normalized} Taiwan OTC equity or ETF`,
+        name: `${normalized} 台灣上櫃股票或 ETF`,
         symbol: `${normalized}.TWO`,
         code: normalized,
         exchange: "Taipei Exchange",
@@ -203,6 +210,50 @@ function createDirectSymbolCandidates(query) {
   }
 
   return results;
+}
+
+export async function getReturnDataWithFallback(symbol, months) {
+  const candidates = createReturnSymbolCandidates(symbol);
+  let firstError = null;
+  let hasInsufficientData = false;
+
+  for (const candidate of candidates) {
+    try {
+      return await getReturnData(candidate, months);
+    } catch (error) {
+      firstError ||= error;
+      if (error.message === "insufficient_data") {
+        hasInsufficientData = true;
+      }
+    }
+  }
+
+  if (hasInsufficientData) {
+    throw new Error("insufficient_data");
+  }
+  throw firstError || new Error("insufficient_data");
+}
+
+export function createReturnSymbolCandidates(symbol) {
+  const normalized = normalizeSymbolText(symbol);
+  if (!normalized) {
+    return [];
+  }
+
+  const candidates = [normalized];
+  const taiwanMatch = normalized.match(/^(\d{3,6}[A-Z]{0,2})(?:\.(TW|TWO))?$/);
+  if (taiwanMatch) {
+    const code = taiwanMatch[1];
+    const suffix = taiwanMatch[2];
+    if (suffix !== "TW") {
+      candidates.push(`${code}.TW`);
+    }
+    if (suffix !== "TWO") {
+      candidates.push(`${code}.TWO`);
+    }
+  }
+
+  return [...new Set(candidates)];
 }
 
 async function getReturnData(symbol, months) {
@@ -326,7 +377,7 @@ function toSearchResult(quote) {
   const code = symbol.includes(".") ? symbol.split(".")[0] : symbol;
   const name = quote.longname || quote.shortname || quote.displayName || quote.name || symbol;
   return {
-    name: String(name),
+    name: displayNameForSearchResult(symbol, String(name)),
     symbol,
     code,
     exchange: String(quote.exchDisp || quote.exchange || quote.fullExchangeName || "N/A"),
@@ -346,7 +397,22 @@ function dedupeResults(results) {
   });
 }
 
-function scoreStock(stock, normalizedQuery) {
+function displayNameForSearchResult(symbol, fallbackName) {
+  const catalogMatch = localizedStockCatalog.find((stock) => stock.symbol.toUpperCase() === symbol.toUpperCase());
+  if (catalogMatch) {
+    return displayNameForStock(catalogMatch);
+  }
+  return fallbackName;
+}
+
+function displayNameForStock(stock) {
+  if (isTaiwanSymbol(stock.symbol)) {
+    return stock.displayName || firstTraditionalChineseAlias(stock) || stock.name;
+  }
+  return stock.name;
+}
+
+function scoreStock(stock, normalizedQuery, codeLikeQuery = false) {
   const fields = [
     stock.name,
     stock.symbol,
@@ -354,10 +420,10 @@ function scoreStock(stock, normalizedQuery) {
     ...(stock.aliases || [])
   ];
 
-  return Math.max(...fields.map((field) => scoreField(field, normalizedQuery)));
+  return Math.max(...fields.map((field) => scoreField(field, normalizedQuery, codeLikeQuery)));
 }
 
-function scoreField(rawField, query) {
+function scoreField(rawField, query, codeLikeQuery = false) {
   const field = normalizeSearchText(rawField);
   if (!field || !query) {
     return 0;
@@ -373,6 +439,9 @@ function scoreField(rawField, query) {
   }
   if (field.length >= 3 && query.includes(field)) {
     return 62;
+  }
+  if (codeLikeQuery) {
+    return 0;
   }
 
   if (isAsciiSearch(query) && query.length >= 3) {
@@ -418,6 +487,10 @@ function normalizeSearchText(value) {
     .replace(/[\s._,\-()]+/g, "");
 }
 
+function normalizeSymbolText(value) {
+  return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
 function tokenizeSearchText(value) {
   return String(value || "")
     .toLowerCase()
@@ -428,6 +501,18 @@ function tokenizeSearchText(value) {
 
 function isAsciiSearch(value) {
   return /^[a-z0-9]+$/.test(value);
+}
+
+function isInstrumentCodeSearch(value) {
+  return /^\d{3,6}[a-z]{0,2}$/.test(value);
+}
+
+function isTaiwanSymbol(symbol) {
+  return /\.(TW|TWO)$/i.test(String(symbol || ""));
+}
+
+function firstTraditionalChineseAlias(stock) {
+  return (stock.aliases || []).find((alias) => /[\u4e00-\u9fff]/.test(alias));
 }
 
 function compactSeries(series, limit) {

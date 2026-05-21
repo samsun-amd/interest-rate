@@ -71,6 +71,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Taiwan Semiconductor Manufacturing Company Limited",
+    displayName: "台積電",
     symbol: "2330.TW",
     code: "2330",
     exchange: "Taiwan Stock Exchange",
@@ -78,6 +79,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Yuanta Daily Taiwan 50 Bull 2X ETF",
+    displayName: "元大台灣50正二",
     symbol: "00631L.TW",
     code: "00631L",
     exchange: "Taiwan Stock Exchange",
@@ -85,6 +87,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Hon Hai Precision Industry Co., Ltd.",
+    displayName: "鴻海",
     symbol: "2317.TW",
     code: "2317",
     exchange: "Taiwan Stock Exchange",
@@ -92,6 +95,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "MediaTek Inc.",
+    displayName: "聯發科",
     symbol: "2454.TW",
     code: "2454",
     exchange: "Taiwan Stock Exchange",
@@ -99,6 +103,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "ASUSTeK Computer Inc.",
+    displayName: "華碩",
     symbol: "2357.TW",
     code: "2357",
     exchange: "Taiwan Stock Exchange",
@@ -106,6 +111,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Acer Incorporated",
+    displayName: "宏碁",
     symbol: "2353.TW",
     code: "2353",
     exchange: "Taiwan Stock Exchange",
@@ -113,6 +119,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Delta Electronics, Inc.",
+    displayName: "台達電",
     symbol: "2308.TW",
     code: "2308",
     exchange: "Taiwan Stock Exchange",
@@ -120,6 +127,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "United Microelectronics Corporation",
+    displayName: "聯電",
     symbol: "2303.TW",
     code: "2303",
     exchange: "Taiwan Stock Exchange",
@@ -127,6 +135,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Quanta Computer Inc.",
+    displayName: "廣達",
     symbol: "2382.TW",
     code: "2382",
     exchange: "Taiwan Stock Exchange",
@@ -134,6 +143,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Wistron Corporation",
+    displayName: "緯創",
     symbol: "3231.TW",
     code: "3231",
     exchange: "Taiwan Stock Exchange",
@@ -141,6 +151,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Inventec Corporation",
+    displayName: "英業達",
     symbol: "2356.TW",
     code: "2356",
     exchange: "Taiwan Stock Exchange",
@@ -148,6 +159,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Pegatron Corporation",
+    displayName: "和碩",
     symbol: "4938.TW",
     code: "4938",
     exchange: "Taiwan Stock Exchange",
@@ -155,6 +167,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Largan Precision Co., Ltd.",
+    displayName: "大立光",
     symbol: "3008.TW",
     code: "3008",
     exchange: "Taiwan Stock Exchange",
@@ -162,6 +175,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Chunghwa Telecom Co., Ltd.",
+    displayName: "中華電信",
     symbol: "2412.TW",
     code: "2412",
     exchange: "Taiwan Stock Exchange",
@@ -169,6 +183,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Fubon Financial Holding Co., Ltd.",
+    displayName: "富邦金",
     symbol: "2881.TW",
     code: "2881",
     exchange: "Taiwan Stock Exchange",
@@ -176,6 +191,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Cathay Financial Holding Co., Ltd.",
+    displayName: "國泰金",
     symbol: "2882.TW",
     code: "2882",
     exchange: "Taiwan Stock Exchange",
@@ -183,6 +199,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "E.SUN Financial Holding Company, Ltd.",
+    displayName: "玉山金",
     symbol: "2884.TW",
     code: "2884",
     exchange: "Taiwan Stock Exchange",
@@ -190,6 +207,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Yuanta Financial Holding Co., Ltd.",
+    displayName: "元大金",
     symbol: "2885.TW",
     code: "2885",
     exchange: "Taiwan Stock Exchange",
@@ -197,6 +215,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Mega Financial Holding Co., Ltd.",
+    displayName: "兆豐金",
     symbol: "2886.TW",
     code: "2886",
     exchange: "Taiwan Stock Exchange",
@@ -204,6 +223,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Uni-President Enterprises Corporation",
+    displayName: "統一",
     symbol: "1216.TW",
     code: "1216",
     exchange: "Taiwan Stock Exchange",
@@ -211,6 +231,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Formosa Plastics Corporation",
+    displayName: "台塑",
     symbol: "1301.TW",
     code: "1301",
     exchange: "Taiwan Stock Exchange",
@@ -218,6 +239,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Evergreen Marine Corporation",
+    displayName: "長榮海運",
     symbol: "2603.TW",
     code: "2603",
     exchange: "Taiwan Stock Exchange",
@@ -225,6 +247,7 @@ export const localizedStockCatalog = [
   },
   {
     name: "Yang Ming Marine Transport Corporation",
+    displayName: "陽明",
     symbol: "2609.TW",
     code: "2609",
     exchange: "Taiwan Stock Exchange",
