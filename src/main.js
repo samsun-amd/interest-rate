@@ -1,16 +1,21 @@
 import {
+  calculateLoanSchedule,
   calculateLoanPayment,
   clampNumber,
   derivePeriodMonthlyRate,
+  simulateDollarCostAverage,
   simulateStockLoanRepayment,
   simulateStockHold
 } from "./calculations.js";
 import { copy } from "./i18n/zh-TW.js";
+import { downloadWorkbook } from "./xlsx-export.js";
+
+const defaultPrincipal = 5000000;
 
 const state = {
   loan: {
-    principal: 1000000,
-    annualRatePercent: 3.25,
+    principal: defaultPrincipal,
+    annualRatePercent: 2.15,
     totalYears: 7,
     graceYears: 1
   },
@@ -25,9 +30,14 @@ const state = {
     error: null
   },
   simulation: {
-    buyAmount: 1000000,
+    buyAmount: defaultPrincipal,
     selectedYear: null
-  }
+  },
+  dca: {
+    monthlyAmount: 50000,
+    selectedYear: null
+  },
+  exportStatus: "idle"
 };
 
 const formatCurrency = new Intl.NumberFormat("zh-TW", {
@@ -87,17 +97,19 @@ updateLoan();
 updateStockSearchView();
 updateReturnView();
 updateSimulationView();
+updateDcaView();
 
 function render() {
   app.innerHTML = `
     <div class="page-shell">
+      <div class="risk-banner">${copy.warning}</div>
       <header class="hero">
-        <div class="risk-banner">${copy.warning}</div>
         <div class="hero-content">
           <div>
             <p class="eyebrow">Loan / Equity Return Tool</p>
             <h1>${copy.appTitle}</h1>
           </div>
+          <button id="export-excel-button" type="button" class="export-button">${copy.exportButton}</button>
         </div>
       </header>
 
@@ -115,7 +127,7 @@ function render() {
               ${numberOnlyControl("principal", copy.principal, state.loan.principal, 1, "1", copy.twd)}
               ${rangeControl("annualRatePercent", copy.annualRate, state.loan.annualRatePercent, 0, 20, "0.01", copy.percent)}
               ${rangeControl("totalYears", copy.totalYears, state.loan.totalYears, 1, 10, "1", copy.years)}
-              ${rangeControl("graceYears", copy.graceYears, state.loan.graceYears, 1, 5, "1", copy.years)}
+              ${rangeControl("graceYears", copy.graceYears, state.loan.graceYears, 0, 5, "1", copy.years)}
             </form>
 
             <div class="result-grid" id="loan-results"></div>
@@ -174,6 +186,26 @@ function render() {
 
           <div class="simulation-detail" id="simulation-detail" aria-live="polite"></div>
         </section>
+
+        <section class="tool-panel dca-panel" aria-labelledby="dca-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">${copy.dcaEyebrow}</p>
+              <h2 id="dca-title">${copy.dcaTitle}</h2>
+              <p class="section-description">${copy.dcaDescription}</p>
+            </div>
+          </div>
+
+          <div class="tool-grid">
+            <form class="control-stack" id="dca-form">
+              ${numberOnlyControl("monthlyAmount", copy.dcaMonthlyAmount, state.dca.monthlyAmount, 1, "1", copy.twd, "dca")}
+            </form>
+
+            <div class="result-grid" id="dca-summary"></div>
+          </div>
+
+          <div class="simulation-detail" id="dca-detail" aria-live="polite"></div>
+        </section>
       </main>
     </div>
   `;
@@ -200,6 +232,12 @@ function bindStaticEvents() {
   document.querySelectorAll("[data-simulation-input]").forEach((input) => {
     input.addEventListener("input", handleSimulationInput);
   });
+
+  document.querySelectorAll("[data-dca-input]").forEach((input) => {
+    input.addEventListener("input", handleDcaInput);
+  });
+
+  document.querySelector("#export-excel-button").addEventListener("click", handleExportExcel);
 }
 
 function numberOnlyControl(name, label, value, min, step, suffix, scope = "loan") {
@@ -248,6 +286,7 @@ function handleLoanInput(event) {
   }
   updateLoan();
   updateSimulationView();
+  updateDcaView();
 }
 
 function handleLoanRange(event) {
@@ -257,6 +296,7 @@ function handleLoanRange(event) {
   document.querySelector(`[data-loan-input='${name}']`).value = value;
   updateLoan();
   updateSimulationView();
+  updateDcaView();
 }
 
 function parsePrincipalInput(value) {
@@ -370,6 +410,8 @@ function clearStockSearch() {
   document.querySelector("#stock-query").value = "";
   updateStockSearchView();
   updateReturnView();
+  updateSimulationView();
+  updateDcaView();
 }
 
 async function runStockSearch() {
@@ -460,6 +502,8 @@ function updateStockSearchView() {
 function scheduleReturnFetch() {
   if (!state.stock.selected) {
     updateReturnView();
+    updateSimulationView();
+    updateDcaView();
     return;
   }
   clearTimeout(returnTimer);
@@ -505,6 +549,7 @@ async function fetchStockReturn() {
     state.stock.error = error.message;
   } finally {
     updateReturnView();
+    updateDcaView();
   }
 }
 
@@ -623,6 +668,7 @@ function updateSimulationView() {
     detail.innerHTML = "";
     return;
   }
+  const loanSchedule = calculateLoanSchedule(loan);
 
   if (!state.stock.selected) {
     summary.innerHTML = `<div class="state-card">${copy.simulationNoStock}</div>`;
@@ -673,7 +719,8 @@ function updateSimulationView() {
     graceMonthlyPayment: loan.graceMonthlyPayment,
     repaymentMonthlyPayment: loan.repaymentMonthlyPayment,
     startDate: new Date(),
-    fxRate
+    fxRate,
+    loanScheduleRows: loanSchedule.rows
   });
 
   if (!result.ok) {
@@ -688,7 +735,8 @@ function updateSimulationView() {
     monthlyRate,
     totalMonths: loan.totalMonths,
     startDate: new Date(),
-    fxRate
+    fxRate,
+    loanScheduleRows: loanSchedule.rows
   });
 
   if (!holdResult.ok) {
@@ -699,6 +747,7 @@ function updateSimulationView() {
 
   state.simulation.result = result;
   state.simulation.holdResult = holdResult;
+  state.simulation.loanSchedule = loanSchedule;
   state.simulation.currency = currency;
   state.simulation.fxRate = fxRate;
 
@@ -720,9 +769,10 @@ function updateSimulationView() {
       ? "negative"
       : "flat";
 
-  const fxCard = currency === "TWD"
-    ? metricCard(copy.simulationCurrencyLabel, currency)
-    : metricCard(copy.simulationFxLabel, `1 ${currency} = ${formatFx.format(fxRate)} TWD${data.fxAsOf ? ` (${data.fxAsOf})` : ""}`);
+  const fxCard = metricCard(
+    copy.simulationFxLabel,
+    `1 ${currency} = ${formatFx.format(fxRate)} TWD${data.fxAsOf ? ` (${data.fxAsOf})` : ""}`
+  );
 
   summary.innerHTML = `
     ${metricCard(copy.simulationCurrencyLabel, currency)}
@@ -788,18 +838,19 @@ function renderSimulationTable() {
     <table class="simulation-table">
       <thead>
         <tr class="group-row">
-          <th class="group-common" colspan="3">${copy.simulationGroupCommon}</th>
+          <th class="group-common" colspan="5">${copy.simulationGroupCommon}</th>
           <th class="group-hold" colspan="3">${copy.simulationGroupHold}</th>
-          <th class="group-repay" colspan="7">${copy.simulationGroupRepay}</th>
+          <th class="group-repay" colspan="6">${copy.simulationGroupRepay}</th>
         </tr>
         <tr>
           <th class="group-common">${copy.simulationTableMonth}</th>
           <th class="group-common">${copy.simulationTableStage}</th>
+          <th class="group-common num">${copy.simulationTablePayment}</th>
+          <th class="group-common num">${copy.simulationTableRemainingDebt}</th>
           <th class="group-common num">${startPriceHeader}</th>
           <th class="group-hold num">${copy.simulationTableHoldValue}</th>
           <th class="group-hold num">${copy.simulationTableHoldTotal}</th>
           <th class="group-hold num">${copy.simulationTableHoldReturn}</th>
-          <th class="group-repay num">${copy.simulationTablePayment}</th>
           <th class="group-repay num">${copy.simulationTableSold}</th>
           <th class="group-repay num">${copy.simulationTableProceeds}</th>
           <th class="group-repay num">${copy.simulationTableRemaining}</th>
@@ -817,11 +868,12 @@ function renderSimulationTable() {
             <tr class="${repay.shortfall > 0 ? "row-warning" : ""}">
               <td class="group-common">${repay.label}</td>
               <td class="group-common">${repay.stage === "grace" ? copy.simulationStageGrace : copy.simulationStageRepayment}</td>
+              <td class="group-common num">${formatCurrency.format(repay.payment)}</td>
+              <td class="group-common num">${formatCurrency.format(repay.remainingDebt)}</td>
               <td class="group-common num">${formatPrice4.format(repay.startPrice)}${currency === "TWD" ? "" : ` ${currency}`}</td>
               <td class="group-hold num">${holdValue}</td>
               <td class="group-hold num">${holdTotal}</td>
               <td class="group-hold num">${holdReturn}</td>
-              <td class="group-repay num">${formatCurrency.format(repay.payment)}</td>
               <td class="group-repay num">${formatSharesInt.format(repay.soldShares)}</td>
               <td class="group-repay num">${formatCurrency.format(repay.proceedsTwd)}</td>
               <td class="group-repay num">${formatSharesInt.format(repay.remainingShares)}</td>
@@ -859,4 +911,474 @@ function simulationErrorMessage(error) {
     invalid_grace: copy.invalidGrace
   };
   return messages[error] || copy.apiError;
+}
+
+function handleDcaInput(event) {
+  const name = event.target.dataset.dcaInput;
+  if (name === "monthlyAmount") {
+    const value = parsePrincipalInput(event.target.value);
+    state.dca.monthlyAmount = value;
+    formatPrincipalInputElement(event.target);
+  } else {
+    state.dca[name] = Number(event.target.value);
+  }
+  updateDcaView();
+}
+
+function handleDcaYearChange(event) {
+  state.dca.selectedYear = Number(event.target.value);
+  renderDcaTable();
+}
+
+function updateDcaView() {
+  const summary = document.querySelector("#dca-summary");
+  const detail = document.querySelector("#dca-detail");
+  if (!summary || !detail) {
+    return;
+  }
+
+  const loan = calculateLoanPayment(state.loan);
+  if (!loan.ok) {
+    summary.innerHTML = `<div class="state-card warning-state">${loanErrorMessage(loan.error)}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  if (!state.stock.selected) {
+    summary.innerHTML = `<div class="state-card">${copy.dcaNoStock}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  if (state.stock.returnStatus === "loading") {
+    summary.innerHTML = `<div class="state-card">${copy.loadingReturn}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  if (state.stock.returnStatus === "insufficient") {
+    summary.innerHTML = `<div class="state-card warning-state">${copy.insufficientData}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  if (state.stock.returnStatus !== "ready" || !state.stock.returnData) {
+    summary.innerHTML = `<div class="state-card">${copy.simulationNoReturn}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  const data = state.stock.returnData;
+  const monthlyRate = derivePeriodMonthlyRate(data.returnRate, data.months);
+  if (monthlyRate === null) {
+    summary.innerHTML = `<div class="state-card warning-state">${copy.simulationInvalidMonthlyRate}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  const currency = (data.currency || "TWD").toUpperCase();
+  const fxRate = currency === "TWD" ? 1 : Number(data.fxRate);
+  if (!Number.isFinite(fxRate) || fxRate <= 0) {
+    summary.innerHTML = `<div class="state-card warning-state">${copy.simulationInvalidFxRate}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  const result = simulateDollarCostAverage({
+    monthlyAmount: state.dca.monthlyAmount,
+    startPrice: data.latestPrice,
+    monthlyRate,
+    totalMonths: loan.totalMonths,
+    startDate: new Date(),
+    fxRate
+  });
+
+  if (!result.ok) {
+    summary.innerHTML = `<div class="state-card warning-state">${dcaErrorMessage(result.error)}</div>`;
+    detail.innerHTML = "";
+    return;
+  }
+
+  state.dca.result = result;
+  state.dca.currency = currency;
+  state.dca.fxRate = fxRate;
+
+  const years = uniqueYears(result.rows);
+  if (!years.includes(state.dca.selectedYear)) {
+    state.dca.selectedYear = years[0];
+  }
+
+  const tone = result.totalReturnPercent > 0
+    ? "positive"
+    : result.totalReturnPercent < 0
+      ? "negative"
+      : "flat";
+
+  summary.innerHTML = `
+    ${metricCard(copy.dcaFinalValue, formatCurrency.format(result.finalValue), tone === "positive" ? "primary" : "")}
+    ${metricCard(copy.dcaTotalReturn, `${formatPercent.format(result.totalReturnPercent)}${copy.percent}`, tone === "positive" ? "primary" : "")}
+    ${metricCard(copy.dcaTotalInvested, formatCurrency.format(result.cumulativeInvested))}
+    ${metricCard(copy.dcaFinalShares, formatSharesInt.format(result.finalShares))}
+    ${metricCard(copy.dcaFinalCash, formatCurrency.format(result.finalCash))}
+  `;
+
+  detail.innerHTML = `
+    <div class="simulation-toolbar">
+      <label class="field year-select">
+        <span>${copy.simulationYearLabel}</span>
+        <select id="dca-year">
+          ${years.map((year) => `<option value="${year}" ${year === state.dca.selectedYear ? "selected" : ""}>${year}</option>`).join("")}
+        </select>
+      </label>
+    </div>
+    <div class="simulation-table-wrap" id="dca-table-wrap"></div>
+    <p class="source-note">${copy.dcaNote}</p>
+  `;
+
+  document.querySelector("#dca-year").addEventListener("change", handleDcaYearChange);
+  renderDcaTable();
+}
+
+function renderDcaTable() {
+  const wrap = document.querySelector("#dca-table-wrap");
+  const result = state.dca.result;
+  if (!wrap || !result) {
+    return;
+  }
+
+  const rows = result.rows.filter((row) => row.year === state.dca.selectedYear);
+  if (rows.length === 0) {
+    wrap.innerHTML = `<div class="state-card">${copy.simulationNoReturn}</div>`;
+    return;
+  }
+
+  const currency = state.dca.currency || "TWD";
+  const priceHeader = currency === "TWD" ? copy.dcaTablePrice : `${copy.dcaTablePrice} (${currency})`;
+
+  wrap.innerHTML = `
+    <table class="simulation-table">
+      <thead>
+        <tr>
+          <th>${copy.dcaTableMonth}</th>
+          <th class="num">${copy.dcaTableAmount}</th>
+          <th class="num">${copy.dcaTableCumulative}</th>
+          <th class="num">${priceHeader}</th>
+          <th class="num">${copy.dcaTableBought}</th>
+          <th class="num">${copy.dcaTableShares}</th>
+          <th class="num">${copy.dcaTableCash}</th>
+          <th class="num">${copy.dcaTableValue}</th>
+          <th class="num">${copy.dcaTableReturn}</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((row) => `
+          <tr>
+            <td>${row.label}</td>
+            <td class="num">${formatCurrency.format(row.monthlyAmount)}</td>
+            <td class="num">${formatCurrency.format(row.cumulativeInvested)}</td>
+            <td class="num">${formatPrice4.format(row.startPrice)}${currency === "TWD" ? "" : ` ${currency}`}</td>
+            <td class="num">${formatSharesInt.format(row.boughtShares)}</td>
+            <td class="num">${formatSharesInt.format(row.totalShares)}</td>
+            <td class="num">${formatCurrency.format(row.cashAtMonthEnd)}</td>
+            <td class="num">${formatCurrency.format(row.totalValueTwd)}</td>
+            <td class="num">${formatPercent.format(row.cumulativeReturnPercent)}${copy.percent}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function dcaErrorMessage(error) {
+  const messages = {
+    invalid_monthly_amount: copy.dcaInvalidMonthlyAmount,
+    invalid_start_price: copy.simulationInvalidStartPrice,
+    invalid_monthly_rate: copy.simulationInvalidMonthlyRate,
+    invalid_fx_rate: copy.simulationInvalidFxRate,
+    invalid_term: copy.invalidTerm
+  };
+  return messages[error] || copy.apiError;
+}
+
+function handleExportExcel() {
+  if (!state.stock.returnData || !state.simulation.result || !state.simulation.holdResult || !state.dca.result) {
+    alert(copy.exportUnavailable);
+    return;
+  }
+
+  setExportStatus("loading");
+  try {
+    downloadWorkbook({
+      fileName: `${copy.exportFileName}-${new Date().toISOString().slice(0, 10)}`,
+      sheets: buildExportSheets()
+    });
+  } catch (error) {
+    console.error(error);
+    alert(copy.exportFailed);
+  } finally {
+    setExportStatus("idle");
+  }
+}
+
+function setExportStatus(status) {
+  state.exportStatus = status;
+  const button = document.querySelector("#export-excel-button");
+  if (!button) {
+    return;
+  }
+  button.disabled = status === "loading";
+  button.textContent = status === "loading" ? copy.exportPreparing : copy.exportButton;
+}
+
+function buildExportSheets() {
+  const loan = calculateLoanPayment(state.loan);
+  const loanSheet = buildLoanExportSheet(loan);
+  const stockSheet = buildStockExportSheet();
+  const strategySheet = buildStrategyExportSheet();
+  const dcaSheet = buildDcaExportSheet();
+  const chartsSheet = buildChartsExportSheet(stockSheet, strategySheet, dcaSheet);
+  return [loanSheet, stockSheet, strategySheet, dcaSheet, chartsSheet];
+}
+
+function buildLoanExportSheet(loan) {
+  const schedule = calculateLoanSchedule(loan);
+  const rows = [
+    [copy.exportLoanSheet, ""],
+    [copy.principal, loan.principal],
+    [copy.annualRate, loan.annualRatePercent],
+    [copy.totalYears, loan.totalYears],
+    [copy.graceYears, loan.graceYears],
+    [copy.graceMonthlyPayment, loan.graceMonthlyPayment],
+    [copy.repaymentMonthlyPayment, loan.repaymentMonthlyPayment],
+    [copy.totalInterest, loan.totalInterest],
+    [copy.totalPayment, loan.totalPayment],
+    [],
+    [
+      copy.simulationTableMonth,
+      copy.simulationTableStage,
+      copy.simulationTablePayment,
+      copy.exportInterest,
+      copy.exportPrincipalPayment,
+      copy.simulationTableRemainingDebt
+    ]
+  ];
+  const start = new Date();
+  schedule.rows.forEach((row) => {
+    rows.push([
+      monthLabel(start, row.index),
+      row.stage === "grace" ? copy.simulationStageGrace : copy.simulationStageRepayment,
+      row.payment,
+      row.interest,
+      row.principalPayment,
+      row.remainingDebt
+    ]);
+  });
+
+  return {
+    name: copy.exportLoanSheet,
+    rows
+  };
+}
+
+function buildStockExportSheet() {
+  const data = state.stock.returnData;
+  const selected = state.stock.selected || {};
+  const rows = [
+    [copy.exportStockSheet, ""],
+    [copy.exportStockName, selected.name || ""],
+    [copy.exportStockSymbol, data.symbol || selected.symbol || ""],
+    [copy.returnRate, data.returnRate],
+    [copy.startDate, data.startDate],
+    [copy.latestDate, data.latestDate],
+    [copy.startPrice, data.startPrice],
+    [copy.latestPrice, data.latestPrice],
+    [copy.simulationCurrencyLabel, data.currency || "TWD"],
+    [copy.simulationFxLabel, data.fxRate || 1],
+    [],
+    [copy.simulationTableMonth, copy.latestPrice]
+  ];
+  const firstDataRow = rows.length + 1;
+  data.series.forEach((point) => {
+    rows.push([point.date, point.price]);
+  });
+
+  return {
+    name: copy.exportStockSheet,
+    rows,
+    chartData: {
+      firstDataRow,
+      priceColumn: 2
+    }
+  };
+}
+
+function buildStrategyExportSheet() {
+  const repay = state.simulation.result;
+  const hold = state.simulation.holdResult;
+  const dca = state.dca.result;
+  const holdByLabel = new Map(hold.rows.map((row) => [row.label, row]));
+  const dcaByLabel = new Map(dca.rows.map((row) => [row.label, row]));
+  const rows = [
+    [copy.exportStrategySheet, ""],
+    [copy.simulationCurrencyLabel, state.simulation.currency || "TWD"],
+    [copy.simulationFxLabel, state.simulation.fxRate || 1],
+    [copy.simulationMonthlyRate, repay.monthlyRatePercent],
+    [copy.dcaFinalValue, dca.finalValue],
+    [copy.simulationHoldFinalValue, hold.finalValue],
+    [copy.simulationRepayFinalValue, repay.finalValue],
+    [],
+    [
+      copy.simulationTableMonth,
+      copy.simulationTableStage,
+      copy.simulationTablePayment,
+      copy.simulationTableRemainingDebt,
+      copy.simulationTableStartPrice,
+      copy.exportStrategyDcaStockValue,
+      copy.exportStrategyHoldStockValue,
+      copy.simulationTableHoldTotal,
+      copy.simulationTableHoldReturn,
+      copy.simulationTableSold,
+      copy.simulationTableProceeds,
+      copy.simulationTableRemaining,
+      copy.simulationTableCash,
+      copy.exportStrategyLoanStockValue,
+      copy.simulationTableShortfall
+    ]
+  ];
+  const firstDataRow = rows.length + 1;
+  repay.rows.forEach((repayRow) => {
+    const holdRow = holdByLabel.get(repayRow.label);
+    const dcaRow = dcaByLabel.get(repayRow.label);
+    rows.push([
+      repayRow.label,
+      repayRow.stage === "grace" ? copy.simulationStageGrace : copy.simulationStageRepayment,
+      repayRow.payment,
+      repayRow.remainingDebt,
+      repayRow.startPrice,
+      dcaRow?.sharesValueTwd ?? null,
+      holdRow?.sharesValueTwd ?? null,
+      holdRow?.totalValueTwd ?? null,
+      holdRow?.cumulativeReturnPercent ?? null,
+      repayRow.soldShares,
+      repayRow.proceedsTwd,
+      repayRow.remainingShares,
+      repayRow.cashAtMonthEnd,
+      repayRow.sharesValueTwd,
+      repayRow.shortfall
+    ]);
+  });
+
+  return {
+    name: copy.exportStrategySheet,
+    rows,
+    chartData: {
+      firstDataRow,
+      dcaStockValueColumn: 6,
+      holdStockValueColumn: 7,
+      loanStockValueColumn: 14
+    }
+  };
+}
+
+function buildDcaExportSheet() {
+  const result = state.dca.result;
+  const rows = [
+    [copy.exportDcaSheet, ""],
+    [copy.simulationCurrencyLabel, state.dca.currency || "TWD"],
+    [copy.simulationFxLabel, state.dca.fxRate || 1],
+    [copy.dcaMonthlyAmount, result.monthlyAmount],
+    [copy.dcaFinalValue, result.finalValue],
+    [copy.dcaTotalInvested, result.cumulativeInvested],
+    [],
+    [
+      copy.dcaTableMonth,
+      copy.dcaTableAmount,
+      copy.dcaTableCumulative,
+      copy.dcaTablePrice,
+      copy.dcaTableBought,
+      copy.dcaTableShares,
+      copy.dcaTableCash,
+      copy.dcaTableValue,
+      copy.dcaTableReturn
+    ]
+  ];
+  const firstDataRow = rows.length + 1;
+  result.rows.forEach((row) => {
+    rows.push([
+      row.label,
+      row.monthlyAmount,
+      row.cumulativeInvested,
+      row.startPrice,
+      row.boughtShares,
+      row.totalShares,
+      row.cashAtMonthEnd,
+      row.totalValueTwd,
+      row.cumulativeReturnPercent
+    ]);
+  });
+
+  return {
+    name: copy.exportDcaSheet,
+    rows,
+    chartData: {
+      firstDataRow,
+      cumulativeColumn: 3,
+      valueColumn: 8
+    }
+  };
+}
+
+function buildChartsExportSheet(stockSheet, strategySheet, dcaSheet) {
+  const currency = (state.stock.returnData?.currency || "TWD").toUpperCase();
+  return {
+    name: copy.exportChartsSheet,
+    rows: [[copy.exportChartsSheet]],
+    charts: [
+      {
+        title: copy.exportStockPriceChart,
+        sourceSheetName: stockSheet.name,
+        categoriesColumn: 1,
+        firstDataRow: stockSheet.chartData.firstDataRow,
+        series: [
+          { name: copy.latestPrice, valuesColumn: stockSheet.chartData.priceColumn, color: "2563EB" }
+        ],
+        xAxisTitle: copy.exportAxisMonth,
+        yAxisTitle: `${copy.exportAxisPrice} (${currency})`,
+        yAxisFormat: "#,##0.00",
+        anchor: { fromCol: 0, fromRow: 1, toCol: 14, toRow: 20 }
+      },
+      {
+        title: copy.exportStrategyChart,
+        sourceSheetName: strategySheet.name,
+        categoriesColumn: 1,
+        firstDataRow: strategySheet.chartData.firstDataRow,
+        series: [
+          { name: copy.exportStrategyDcaStockValue, valuesColumn: strategySheet.chartData.dcaStockValueColumn, color: "10B981" },
+          { name: copy.exportStrategyHoldStockValue, valuesColumn: strategySheet.chartData.holdStockValueColumn, color: "2563EB" },
+          { name: copy.exportStrategyLoanStockValue, valuesColumn: strategySheet.chartData.loanStockValueColumn, color: "F59E0B" }
+        ],
+        xAxisTitle: copy.exportAxisMonth,
+        yAxisTitle: copy.exportAxisTwd,
+        anchor: { fromCol: 0, fromRow: 23, toCol: 14, toRow: 42 }
+      },
+      {
+        title: copy.exportDcaChart,
+        sourceSheetName: dcaSheet.name,
+        categoriesColumn: 1,
+        firstDataRow: dcaSheet.chartData.firstDataRow,
+        series: [
+          { name: copy.dcaTableCumulative, valuesColumn: dcaSheet.chartData.cumulativeColumn, color: "64748B" },
+          { name: copy.dcaTableValue, valuesColumn: dcaSheet.chartData.valueColumn, color: "10B981" }
+        ],
+        xAxisTitle: copy.exportAxisMonth,
+        yAxisTitle: copy.exportAxisTwd,
+        anchor: { fromCol: 0, fromRow: 45, toCol: 14, toRow: 64 }
+      }
+    ]
+  };
+}
+
+function monthLabel(startDate, index) {
+  const date = new Date(startDate.getFullYear(), startDate.getMonth() + index, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }

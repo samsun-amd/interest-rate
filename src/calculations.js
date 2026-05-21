@@ -61,6 +61,46 @@ export function calculateLoanPayment(input) {
   };
 }
 
+export function calculateLoanSchedule(input) {
+  const loan = input && input.ok === true ? input : calculateLoanPayment(input);
+  if (!loan.ok) {
+    return loan;
+  }
+
+  const rows = [];
+  const monthlyRate = loan.annualRatePercent / 100 / 12;
+  let remainingPrincipal = loan.principal;
+  let cumulativePayment = 0;
+
+  for (let index = 0; index < loan.totalMonths; index += 1) {
+    const stage = index < loan.graceMonths ? "grace" : "repayment";
+    const payment = stage === "grace" ? loan.graceMonthlyPayment : loan.repaymentMonthlyPayment;
+    const interest = remainingPrincipal * monthlyRate;
+    const principalPayment = stage === "grace" ? 0 : Math.min(remainingPrincipal, Math.max(0, payment - interest));
+    remainingPrincipal = Math.max(0, remainingPrincipal - principalPayment);
+    cumulativePayment += payment;
+    const remainingDebt = index === loan.totalMonths - 1
+      ? 0
+      : Math.max(0, loan.totalPayment - cumulativePayment);
+
+    rows.push({
+      index,
+      stage,
+      payment,
+      interest,
+      principalPayment,
+      remainingPrincipal,
+      remainingDebt
+    });
+  }
+
+  return {
+    ok: true,
+    ...loan,
+    rows
+  };
+}
+
 export function calculateReturnRate(startPrice, endPrice) {
   const start = Number(startPrice);
   const end = Number(endPrice);
@@ -90,6 +130,7 @@ export function simulateStockHold(input) {
   const totalMonths = Math.round(Number(input.totalMonths));
   const startDate = input.startDate instanceof Date ? input.startDate : new Date();
   const fxRate = Number(input.fxRate ?? 1);
+  const loanScheduleRows = Array.isArray(input.loanScheduleRows) ? input.loanScheduleRows : [];
 
   if (!Number.isFinite(buyAmount) || buyAmount <= 0) {
     return { ok: false, error: "invalid_buy_amount" };
@@ -149,7 +190,8 @@ export function simulateStockHold(input) {
       cash: initialCash,
       totalValueTwd,
       monthReturnPercent,
-      cumulativeReturnPercent
+      cumulativeReturnPercent,
+      remainingDebt: Number(loanScheduleRows[index]?.remainingDebt ?? 0)
     });
 
     priceAtMonthStart = priceAtMonthEnd;
@@ -187,6 +229,7 @@ export function simulateStockLoanRepayment(input) {
   const repaymentMonthlyPayment = Number(input.repaymentMonthlyPayment);
   const startDate = input.startDate instanceof Date ? input.startDate : new Date();
   const fxRate = Number(input.fxRate ?? 1);
+  const loanScheduleRows = Array.isArray(input.loanScheduleRows) ? input.loanScheduleRows : [];
 
   if (!Number.isFinite(buyAmount) || buyAmount <= 0) {
     return { ok: false, error: "invalid_buy_amount" };
@@ -279,7 +322,8 @@ export function simulateStockLoanRepayment(input) {
     totalSoldShares += soldShares;
 
     const sharesValueTwd = shares * priceAtMonthEnd * fxRate;
-    const endValue = sharesValueTwd + cash;
+    const endValue = sharesValueTwd;
+    const endAssetValue = sharesValueTwd + cash;
     rows.push({
       index,
       year,
@@ -299,7 +343,9 @@ export function simulateStockLoanRepayment(input) {
       cashAtMonthEnd: cash,
       remainingShares: shares,
       sharesValueTwd,
-      endValue
+      endValue,
+      endAssetValue,
+      remainingDebt: Number(loanScheduleRows[index]?.remainingDebt ?? 0)
     });
 
     priceAtMonthStart = priceAtMonthEnd;
@@ -308,10 +354,11 @@ export function simulateStockLoanRepayment(input) {
   const finalRow = rows[rows.length - 1];
   const finalShares = finalRow ? finalRow.remainingShares : 0;
   const finalValue = finalRow ? finalRow.endValue : 0;
+  const finalAssetValue = finalRow ? finalRow.endAssetValue : 0;
   const finalCash = finalRow ? finalRow.cashAtMonthEnd : 0;
   const finalSharesValue = finalRow ? finalRow.sharesValueTwd : 0;
-  const totalReturnPercent = ((finalValue - buyAmount) / buyAmount) * 100;
-  const netReturnPercent = ((finalValue - buyAmount - totalShortfall) / buyAmount) * 100;
+  const totalReturnPercent = ((finalAssetValue - buyAmount) / buyAmount) * 100;
+  const netReturnPercent = ((finalAssetValue - buyAmount - totalShortfall) / buyAmount) * 100;
 
   return {
     ok: true,
@@ -330,12 +377,117 @@ export function simulateStockLoanRepayment(input) {
     finalCash,
     finalSharesValue,
     finalValue,
+    finalAssetValue,
     totalPaid,
     totalShortfall,
     insufficient,
     insufficientMonthIndex,
     totalReturnPercent,
     netReturnPercent,
+    rows
+  };
+}
+
+export function simulateDollarCostAverage(input) {
+  const monthlyAmount = Number(input.monthlyAmount);
+  const startPrice = Number(input.startPrice);
+  const monthlyRate = Number(input.monthlyRate);
+  const totalMonths = Math.round(Number(input.totalMonths));
+  const startDate = input.startDate instanceof Date ? input.startDate : new Date();
+  const fxRate = Number(input.fxRate ?? 1);
+
+  if (!Number.isFinite(monthlyAmount) || monthlyAmount <= 0) {
+    return { ok: false, error: "invalid_monthly_amount" };
+  }
+  if (!Number.isFinite(startPrice) || startPrice <= 0) {
+    return { ok: false, error: "invalid_start_price" };
+  }
+  if (!Number.isFinite(monthlyRate)) {
+    return { ok: false, error: "invalid_monthly_rate" };
+  }
+  if (!Number.isFinite(totalMonths) || totalMonths <= 0) {
+    return { ok: false, error: "invalid_term" };
+  }
+  if (!Number.isFinite(fxRate) || fxRate <= 0) {
+    return { ok: false, error: "invalid_fx_rate" };
+  }
+
+  const rows = [];
+  const baseYear = startDate.getFullYear();
+  const baseMonth = startDate.getMonth();
+
+  let priceAtMonthStart = startPrice;
+  let shares = 0;
+  let cash = 0;
+  let cumulativeInvested = 0;
+  let totalBoughtShares = 0;
+
+  for (let index = 0; index < totalMonths; index += 1) {
+    const calendar = new Date(baseYear, baseMonth + index, 1);
+    const year = calendar.getFullYear();
+    const month = calendar.getMonth() + 1;
+    const label = `${year}-${String(month).padStart(2, "0")}`;
+
+    cash += monthlyAmount;
+    cumulativeInvested += monthlyAmount;
+
+    const availableCurrency = cash / fxRate;
+    const boughtShares = priceAtMonthStart > 0 ? Math.floor(availableCurrency / priceAtMonthStart) : 0;
+    const investedTwd = boughtShares * priceAtMonthStart * fxRate;
+    cash -= investedTwd;
+    shares += boughtShares;
+    totalBoughtShares += boughtShares;
+
+    let priceAtMonthEnd = priceAtMonthStart * (1 + monthlyRate);
+    if (!Number.isFinite(priceAtMonthEnd) || priceAtMonthEnd < 0) {
+      priceAtMonthEnd = 0;
+    }
+
+    const sharesValueTwd = shares * priceAtMonthEnd * fxRate;
+    const totalValueTwd = sharesValueTwd + cash;
+    const cumulativeReturnPercent = ((totalValueTwd - cumulativeInvested) / cumulativeInvested) * 100;
+
+    rows.push({
+      index,
+      year,
+      month,
+      label,
+      monthlyAmount,
+      cumulativeInvested,
+      startPrice: priceAtMonthStart,
+      startPriceTwd: priceAtMonthStart * fxRate,
+      endPrice: priceAtMonthEnd,
+      endPriceTwd: priceAtMonthEnd * fxRate,
+      boughtShares,
+      investedTwd,
+      totalShares: shares,
+      cashAtMonthEnd: cash,
+      sharesValueTwd,
+      totalValueTwd,
+      cumulativeReturnPercent
+    });
+
+    priceAtMonthStart = priceAtMonthEnd;
+  }
+
+  const finalRow = rows[rows.length - 1];
+  const finalValue = finalRow ? finalRow.totalValueTwd : 0;
+  const totalReturnPercent = cumulativeInvested > 0 ? ((finalValue - cumulativeInvested) / cumulativeInvested) * 100 : 0;
+
+  return {
+    ok: true,
+    monthlyAmount,
+    fxRate,
+    startPrice,
+    monthlyRate,
+    monthlyRatePercent: monthlyRate * 100,
+    totalMonths,
+    totalBoughtShares,
+    finalShares: shares,
+    finalCash: cash,
+    cumulativeInvested,
+    finalValue,
+    totalReturnPercent,
     rows
   };
 }

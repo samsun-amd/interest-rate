@@ -48,12 +48,16 @@ button {
 .hero {
   display: grid;
   gap: 16px;
-  padding: 0 0 18px;
+  padding: 16px 0 18px;
 }
 
 .risk-banner {
+  position: sticky;
+  top: 0;
+  z-index: 20;
   border: 1px solid rgba(244, 188, 83, 0.44);
   background: rgba(244, 188, 83, 0.11);
+  backdrop-filter: blur(10px);
   color: #ffe0a0;
   border-radius: 8px;
   padding: 13px 16px;
@@ -68,6 +72,21 @@ button {
   justify-content: space-between;
   gap: 28px;
   padding: 8px 2px 0;
+}
+
+.export-button {
+  border: 1px solid rgba(55, 199, 181, 0.5);
+  border-radius: 8px;
+  background: rgba(55, 199, 181, 0.15);
+  color: var(--accent-strong);
+  padding: 12px 16px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.export-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .eyebrow {
@@ -509,6 +528,11 @@ input[type="range"] {
 
   .hero-content {
     display: block;
+  }
+
+  .export-button {
+    margin-top: 18px;
+    width: 100%;
   }
 
   .tool-grid {

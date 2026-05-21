@@ -2,10 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   calculateLoanPayment,
+  calculateLoanSchedule,
   calculateReturnRate,
   derivePeriodMonthlyRate,
   simulateStockLoanRepayment,
-  simulateStockHold
+  simulateStockHold,
+  simulateDollarCostAverage
 } from "../src/calculations.js";
 
 test("calculates zero-rate loan with grace period", () => {
@@ -32,6 +34,40 @@ test("rejects grace period that reaches term", () => {
   });
 
   assert.deepEqual(result, { ok: false, error: "grace_exceeds_term" });
+});
+
+test("allows zero grace period and builds remaining debt schedule", () => {
+  const loan = calculateLoanPayment({
+    principal: 120000,
+    annualRatePercent: 0,
+    totalYears: 1,
+    graceYears: 0
+  });
+  const schedule = calculateLoanSchedule(loan);
+
+  assert.equal(loan.ok, true);
+  assert.equal(loan.graceMonths, 0);
+  assert.equal(schedule.ok, true);
+  assert.equal(schedule.rows.length, 12);
+  assert.equal(schedule.rows[0].remainingDebt, 110000);
+  assert.equal(schedule.rows[0].remainingPrincipal, 110000);
+  assert.equal(schedule.rows[11].remainingDebt, 0);
+  assert.equal(schedule.rows[11].remainingPrincipal, 0);
+});
+
+test("remaining debt includes scheduled future interest", () => {
+  const loan = calculateLoanPayment({
+    principal: 120000,
+    annualRatePercent: 12,
+    totalYears: 1,
+    graceYears: 0
+  });
+  const schedule = calculateLoanSchedule(loan);
+
+  assert.equal(schedule.ok, true);
+  assert.ok(schedule.rows[0].remainingDebt > schedule.rows[0].remainingPrincipal);
+  assert.ok(Math.abs(schedule.rows[0].remainingDebt - (loan.totalPayment - loan.repaymentMonthlyPayment)) < 1e-6);
+  assert.equal(schedule.rows[11].remainingDebt, 0);
 });
 
 test("calculates return rate", () => {
@@ -117,6 +153,27 @@ test("supports foreign-currency stock with fx conversion and integer shares", ()
   });
 });
 
+test("repayment end value tracks stock value separately from cash", () => {
+  const result = simulateStockLoanRepayment({
+    buyAmount: 1000,
+    startPrice: 300,
+    monthlyRate: 0,
+    totalMonths: 2,
+    graceMonths: 0,
+    graceMonthlyPayment: 0,
+    repaymentMonthlyPayment: 200,
+    startDate: new Date(2025, 0, 1),
+    fxRate: 1
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.rows[0].soldShares, 1);
+  assert.equal(result.rows[0].cashAtMonthEnd, 200);
+  assert.equal(result.rows[0].endValue, result.rows[0].sharesValueTwd);
+  assert.equal(result.rows[0].endAssetValue, result.rows[0].sharesValueTwd + result.rows[0].cashAtMonthEnd);
+  assert.ok(result.rows[0].endAssetValue > result.rows[0].endValue);
+});
+
 test("rejects buy amount that cannot purchase one share", () => {
   const result = simulateStockLoanRepayment({
     buyAmount: 100,
@@ -134,12 +191,19 @@ test("rejects buy amount that cannot purchase one share", () => {
 
 test("simulates pure stock hold with integer shares and cumulative growth", () => {
   const monthlyRate = 0.01;
+  const loanSchedule = calculateLoanSchedule({
+    principal: 1_000_000,
+    annualRatePercent: 0,
+    totalYears: 1,
+    graceYears: 0
+  });
   const result = simulateStockHold({
     buyAmount: 1_000_000,
     startPrice: 100,
     monthlyRate,
     totalMonths: 6,
-    startDate: new Date(2025, 0, 1)
+    startDate: new Date(2025, 0, 1),
+    loanScheduleRows: loanSchedule.rows
   });
 
   assert.equal(result.ok, true);
@@ -154,6 +218,7 @@ test("simulates pure stock hold with integer shares and cumulative growth", () =
 
   result.rows.forEach((row, n) => {
     assert.ok(Math.abs(row.cumulativeReturnPercent - expectedCumulative(n)) < 1e-6);
+    assert.equal(row.remainingDebt, loanSchedule.rows[n].remainingDebt);
   });
 });
 
@@ -184,4 +249,49 @@ test("rejects invalid simulation inputs", () => {
     }),
     { ok: false, error: "invalid_buy_amount" }
   );
+});
+
+test("simulates dollar-cost averaging with integer monthly purchases", () => {
+  const result = simulateDollarCostAverage({
+    monthlyAmount: 10_000,
+    startPrice: 300,
+    monthlyRate: 0.01,
+    totalMonths: 3,
+    startDate: new Date(2025, 0, 1),
+    fxRate: 30
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.rows.length, 3);
+  result.rows.forEach((row) => {
+    assert.equal(Number.isInteger(row.boughtShares), true);
+    assert.equal(Number.isInteger(row.totalShares), true);
+    assert.ok(row.cashAtMonthEnd >= 0);
+  });
+  assert.equal(result.cumulativeInvested, 30_000);
+});
+
+test("rejects invalid dollar-cost averaging inputs", () => {
+  assert.deepEqual(
+    simulateDollarCostAverage({
+      monthlyAmount: 0,
+      startPrice: 100,
+      monthlyRate: 0.01,
+      totalMonths: 12
+    }),
+    { ok: false, error: "invalid_monthly_amount" }
+  );
+});
+
+test("dollar-cost averaging handles a total loss monthly rate without fractional shares", () => {
+  const result = simulateDollarCostAverage({
+    monthlyAmount: 10_000,
+    startPrice: 100,
+    monthlyRate: -1,
+    totalMonths: 3
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.rows[1].boughtShares, 0);
+  assert.equal(Number.isFinite(result.finalValue), true);
 });
