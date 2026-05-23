@@ -29,6 +29,19 @@ Open:
 http://127.0.0.1:5173/
 ```
 
+The service listens on all network interfaces by default:
+
+```text
+HOST=0.0.0.0
+PORT=5173
+```
+
+Other devices on the same LAN can open:
+
+```text
+http://<this-machine-ip>:5173/
+```
+
 Check service status:
 
 ```bash
@@ -75,6 +88,59 @@ cd /home/chisun/slai.codex/github/interest-rate
 ./uninstall-service.sh
 ```
 
+## Service Connection Settings
+
+The installed service file is:
+
+```text
+~/.config/systemd/user/interest-rate.service
+```
+
+Default service connection settings:
+
+```text
+Environment=HOST=0.0.0.0
+Environment=PORT=5173
+```
+
+This means:
+
+```text
+Local URL: http://127.0.0.1:5173/
+LAN URL:   http://<this-machine-ip>:5173/
+```
+
+Find this machine's LAN IP:
+
+```bash
+hostname -I
+```
+
+Change to localhost-only mode:
+
+```bash
+sed -i 's/Environment=HOST=.*/Environment=HOST=127.0.0.1/' ~/.config/systemd/user/interest-rate.service
+systemctl --user daemon-reload
+systemctl --user restart interest-rate.service
+```
+
+Change service port:
+
+```bash
+sed -i 's/Environment=PORT=.*/Environment=PORT=8080/' ~/.config/systemd/user/interest-rate.service
+systemctl --user daemon-reload
+systemctl --user restart interest-rate.service
+```
+
+Return to default LAN mode:
+
+```bash
+sed -i 's/Environment=HOST=.*/Environment=HOST=0.0.0.0/' ~/.config/systemd/user/interest-rate.service
+sed -i 's/Environment=PORT=.*/Environment=PORT=5173/' ~/.config/systemd/user/interest-rate.service
+systemctl --user daemon-reload
+systemctl --user restart interest-rate.service
+```
+
 ## Script-Based Run
 
 If systemd is not needed, use the project scripts:
@@ -103,7 +169,7 @@ Restart:
 ./start.sh
 ```
 
-## LAN Access
+## LAN Access With Scripts
 
 To allow other devices on the same network to open the web page:
 
@@ -211,10 +277,10 @@ node --check src/market-symbol-cache.js
 
 ## Configuration
 
-Default endpoint:
+Default service endpoint:
 
 ```text
-HOST=127.0.0.1
+HOST=0.0.0.0
 PORT=5173
 ```
 
