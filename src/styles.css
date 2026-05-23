@@ -74,7 +74,15 @@ button {
   padding: 8px 2px 0;
 }
 
-.export-button {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.action-button {
   border: 1px solid rgba(55, 199, 181, 0.5);
   border-radius: 8px;
   background: rgba(55, 199, 181, 0.15);
@@ -84,7 +92,7 @@ button {
   white-space: nowrap;
 }
 
-.export-button:disabled {
+.action-button:disabled {
   cursor: wait;
   opacity: 0.65;
 }
@@ -530,9 +538,13 @@ input[type="range"] {
     display: block;
   }
 
-  .export-button {
+  .header-actions {
     margin-top: 18px;
     width: 100%;
+  }
+
+  .action-button {
+    flex: 1 1 180px;
   }
 
   .tool-grid {

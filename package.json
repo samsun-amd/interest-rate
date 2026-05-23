@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "cache:status": "node scripts/refresh-market-cache.js status",
+    "cache:refresh": "node scripts/refresh-market-cache.js refresh"
   },
   "engines": {
     "node": ">=20"

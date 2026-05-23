@@ -70,6 +70,13 @@ export const localizedStockCatalog = [
     aliases: ["台積電 ADR", "TSMC ADR", "Taiwan Semiconductor"]
   },
   {
+    name: "SiTime Corporation",
+    symbol: "SITM",
+    code: "SITM",
+    exchange: "Nasdaq",
+    aliases: ["SiTime", "sitime", "MEMS timing"]
+  },
+  {
     name: "Taiwan Semiconductor Manufacturing Company Limited",
     displayName: "台積電",
     symbol: "2330.TW",
@@ -92,6 +99,14 @@ export const localizedStockCatalog = [
     code: "2317",
     exchange: "Taiwan Stock Exchange",
     aliases: ["鴻海", "富士康", "Foxconn", "Hon Hai"]
+  },
+  {
+    name: "Thinking Electronic Industrial Co., Ltd.",
+    displayName: "興勤",
+    symbol: "2428.TW",
+    code: "2428",
+    exchange: "Taiwan Stock Exchange",
+    aliases: ["興勤", "興勤電子", "Thinking Electronic", "Thinking Electronic Industrial"]
   },
   {
     name: "MediaTek Inc.",
@@ -164,6 +179,14 @@ export const localizedStockCatalog = [
     code: "4938",
     exchange: "Taiwan Stock Exchange",
     aliases: ["和碩", "Pegatron"]
+  },
+  {
+    name: "HIWIN Mikrosystem Corp.",
+    displayName: "大銀微系統",
+    symbol: "4576.TW",
+    code: "4576",
+    exchange: "Taiwan Stock Exchange",
+    aliases: ["大銀微系統", "大銀微", "HIWIN Mikrosystem", "Hiwin Mikrosystem"]
   },
   {
     name: "Largan Precision Co., Ltd.",

@@ -37,7 +37,8 @@ const state = {
     monthlyAmount: 50000,
     selectedYear: null
   },
-  exportStatus: "idle"
+  exportStatus: "idle",
+  cacheStatus: "idle"
 };
 
 const formatCurrency = new Intl.NumberFormat("zh-TW", {
@@ -109,7 +110,10 @@ function render() {
             <p class="eyebrow">Loan / Equity Return Tool</p>
             <h1>${copy.appTitle}</h1>
           </div>
-          <button id="export-excel-button" type="button" class="export-button">${copy.exportButton}</button>
+          <div class="header-actions">
+            <button id="refresh-cache-button" type="button" class="action-button">${copy.refreshCacheButton}</button>
+            <button id="export-excel-button" type="button" class="action-button">${copy.exportButton}</button>
+          </div>
         </div>
       </header>
 
@@ -238,6 +242,7 @@ function bindStaticEvents() {
   });
 
   document.querySelector("#export-excel-button").addEventListener("click", handleExportExcel);
+  document.querySelector("#refresh-cache-button").addEventListener("click", handleRefreshCache);
 }
 
 function numberOnlyControl(name, label, value, min, step, suffix, scope = "loan") {
@@ -1128,6 +1133,44 @@ function setExportStatus(status) {
   }
   button.disabled = status === "loading";
   button.textContent = status === "loading" ? copy.exportPreparing : copy.exportButton;
+}
+
+async function handleRefreshCache() {
+  setCacheStatus("loading");
+  try {
+    const response = await fetch("/api/market-cache?action=refresh", {
+      method: "POST"
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "refresh_failed");
+    }
+    setCacheStatus("done");
+    setTimeout(() => setCacheStatus("idle"), 2200);
+  } catch (error) {
+    console.error(error);
+    setCacheStatus("error");
+    alert(copy.refreshCacheFailed);
+    setTimeout(() => setCacheStatus("idle"), 2200);
+  }
+}
+
+function setCacheStatus(status) {
+  state.cacheStatus = status;
+  const button = document.querySelector("#refresh-cache-button");
+  if (!button) {
+    return;
+  }
+  button.disabled = status === "loading";
+  if (status === "loading") {
+    button.textContent = copy.refreshCacheRunning;
+    return;
+  }
+  if (status === "done") {
+    button.textContent = copy.refreshCacheDone;
+    return;
+  }
+  button.textContent = copy.refreshCacheButton;
 }
 
 function buildExportSheets() {

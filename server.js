@@ -4,6 +4,11 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { calculateReturnRate } from "./src/calculations.js";
 import { localizedStockCatalog } from "./src/i18n/stock-catalog.zh-TW.js";
+import {
+  getMarketSymbolCacheStatus,
+  refreshMarketSymbolCache,
+  searchMarketSymbols
+} from "./src/market-symbol-cache.js";
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 const host = process.env.HOST || "127.0.0.1";
@@ -34,6 +39,11 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (url.pathname === "/api/market-cache") {
+      await handleMarketCache(request, url, response);
+      return;
+    }
+
     await serveStatic(url.pathname, response);
   } catch (error) {
     console.error(error);
@@ -59,10 +69,21 @@ async function handleSearch(url, response) {
   }
 
   try {
-    const yahooResults = await settleSearch(searchYahoo(query));
     const catalogResults = searchCatalog(query);
     const directResults = createDirectSymbolCandidates(query);
-    const results = dedupeResults([...catalogResults, ...directResults, ...yahooResults]).slice(0, 12);
+    const marketResults = await searchMarketSymbols(query);
+    const exactCatalogResults = catalogResults.filter((result) => isExactSymbolMatch(result, query));
+    const fuzzyCatalogResults = catalogResults.filter((result) => !isExactSymbolMatch(result, query));
+    const yahooResults = catalogResults.length > 0 || directResults.length > 0 || marketResults.length > 0
+      ? []
+      : await settleSearch(searchYahoo(query));
+    const results = dedupeResults([
+      ...exactCatalogResults,
+      ...directResults,
+      ...marketResults,
+      ...fuzzyCatalogResults,
+      ...yahooResults
+    ]).slice(0, 12);
     sendJson(response, 200, { results });
   } catch (error) {
     console.error(error);
@@ -94,6 +115,47 @@ async function handleReturns(url, response) {
     console.error(error);
     sendJson(response, 502, { error: "upstream_returns_failed" });
   }
+}
+
+async function handleMarketCache(request, url, response) {
+  if (request.method === "GET") {
+    sendJson(response, 200, await getMarketSymbolCacheStatus());
+    return;
+  }
+
+  if (request.method !== "POST") {
+    sendJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+
+  if (!isLocalRequest(request)) {
+    sendJson(response, 403, { error: "local_only" });
+    return;
+  }
+
+  const action = url.searchParams.get("action") || "refresh";
+  if (action !== "refresh") {
+    sendJson(response, 400, { error: "invalid_action" });
+    return;
+  }
+
+  try {
+    const cache = await refreshMarketSymbolCache();
+    sendJson(response, 200, {
+      ok: true,
+      updatedAt: new Date(cache.updatedAt).toISOString(),
+      sources: cache.sources,
+      count: cache.items.length
+    });
+  } catch (error) {
+    console.error(error);
+    sendJson(response, 502, { error: "cache_refresh_failed", message: error.message });
+  }
+}
+
+function isLocalRequest(request) {
+  const address = request.socket.remoteAddress || "";
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
 async function serveStatic(pathname, response) {
@@ -173,33 +235,41 @@ export function searchCatalog(query) {
 }
 
 export function createDirectSymbolCandidates(query) {
-  const normalized = normalizeSymbolText(query);
+  const rawSymbol = normalizeSymbolText(query);
+  const normalized = normalizeTickerSearchText(query);
   if (!normalized) {
     return [];
   }
 
   const results = [];
 
-  if (/^\d{3,6}[A-Z]{0,2}$/.test(normalized)) {
-    results.push(
-      {
-        name: `${normalized} 台灣上市股票或 ETF`,
-        symbol: `${normalized}.TW`,
-        code: normalized,
-        exchange: "Taiwan Stock Exchange",
-        type: "EQUITY"
-      },
-      {
-        name: `${normalized} 台灣上櫃股票或 ETF`,
-        symbol: `${normalized}.TWO`,
-        code: normalized,
-        exchange: "Taipei Exchange",
-        type: "EQUITY"
-      }
-    );
+  const taiwanMatch = normalized.match(/^(\d{3,6}[A-Z]{0,2})(?:-(TW|TWO))?$/);
+  if (taiwanMatch) {
+    const code = taiwanMatch[1];
+    const suffix = taiwanMatch[2];
+    const listedCandidate = {
+      name: `${code} 台灣上市股票或 ETF`,
+      symbol: `${code}.TW`,
+      code,
+      exchange: "Taiwan Stock Exchange",
+      type: "EQUITY"
+    };
+    const otcCandidate = {
+      name: `${code} 台灣上櫃股票或 ETF`,
+      symbol: `${code}.TWO`,
+      code,
+      exchange: "Taipei Exchange",
+      type: "EQUITY"
+    };
+
+    if (suffix === "TWO") {
+      results.push(otcCandidate, listedCandidate);
+    } else {
+      results.push(listedCandidate, otcCandidate);
+    }
   }
 
-  if (/^[A-Z]{1,5}$/.test(normalized)) {
+  if (/^[A-Z]{1,5}(-[A-Z])?$/.test(normalized)) {
     results.push({
       name: `${normalized} US listed equity or ETF`,
       symbol: normalized,
@@ -209,7 +279,25 @@ export function createDirectSymbolCandidates(query) {
     });
   }
 
-  return results;
+  const exchangeMatch = rawSymbol.match(/^([A-Z0-9]{1,12})\.([A-Z]{2,4})$/);
+  if (exchangeMatch && !isTaiwanSymbol(rawSymbol)) {
+    results.push({
+      name: `${rawSymbol} listed equity or ETF`,
+      symbol: rawSymbol,
+      code: exchangeMatch[1],
+      exchange: exchangeMatch[2],
+      type: "EQUITY"
+    });
+  }
+
+  return dedupeResults(results);
+}
+
+function isExactSymbolMatch(result, query) {
+  const normalizedQuery = normalizeTickerSearchText(query);
+  const symbol = normalizeTickerSearchText(result.symbol);
+  const code = normalizeTickerSearchText(result.code);
+  return symbol === normalizedQuery || code === normalizedQuery;
 }
 
 export async function getReturnDataWithFallback(symbol, months) {
@@ -235,7 +323,7 @@ export async function getReturnDataWithFallback(symbol, months) {
 }
 
 export function createReturnSymbolCandidates(symbol) {
-  const normalized = normalizeSymbolText(symbol);
+  const normalized = normalizeReturnSymbolText(symbol);
   if (!normalized) {
     return [];
   }
@@ -489,6 +577,19 @@ function normalizeSearchText(value) {
 
 function normalizeSymbolText(value) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function normalizeReturnSymbolText(value) {
+  const normalized = normalizeSymbolText(value);
+  const classShareMatch = normalized.match(/^([A-Z]{1,5})[./]([A-Z])$/);
+  if (classShareMatch) {
+    return `${classShareMatch[1]}-${classShareMatch[2]}`;
+  }
+  return normalized.replace(/\//g, "-");
+}
+
+function normalizeTickerSearchText(value) {
+  return normalizeReturnSymbolText(value).replace(/\./g, "-");
 }
 
 function tokenizeSearchText(value) {

@@ -1,0 +1,17 @@
+[Unit]
+Description=Interest Rate Comparison Tool
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__APP_DIR__
+ExecStart=__NODE_BIN__ __APP_DIR__/server.js
+Restart=on-failure
+RestartSec=5
+Environment=HOST=127.0.0.1
+Environment=PORT=5173
+Environment=MARKET_SYMBOL_CACHE_TTL_MS=86400000
+
+[Install]
+WantedBy=default.target
